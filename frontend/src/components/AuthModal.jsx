@@ -27,7 +27,10 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }) {
 
     try {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-      const res = await axios.post(`http://localhost:5000${endpoint}`, formData);
+    const res = await axios.post(
+  `https://rentright-1fdc.onrender.com${endpoint}`,
+  formData
+);
       setLoading(false);
       onLoginSuccess(res.data);
       onClose();
