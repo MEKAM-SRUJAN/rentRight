@@ -13,11 +13,25 @@ import {
 const LIMIT = 9; // cards per page
 
 export default function Home() {
+  // ── cached listings helper ──────────────────────────────
+  const getCachedData = () => {
+    try {
+      const cached = sessionStorage.getItem('rentright_cached_listings');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  };
+  const cachedData = getCachedData();
+
   // ── state ──────────────────────────────────────────────
-  const [listings, setListings] = useState([]);
-  const [total, setTotal]       = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const [listings, setListings] = useState(cachedData?.listings || []);
+  const [total, setTotal]       = useState(cachedData?.total || 0);
+  const [totalPages, setTotalPages] = useState(cachedData?.totalPages || 1);
   const [page, setPage]         = useState(1);
+  const [loading, setLoading]   = useState(!cachedData);
+  const [serverWakingUp, setServerWakingUp] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
 
   // hero search bar (quick search)
   const [heroSearch, setHeroSearch] = useState('');
@@ -46,6 +60,14 @@ export default function Home() {
 
   // ── fetch ───────────────────────────────────────────────
   const fetchListings = useCallback(async (filtersToUse, pageNum) => {
+    setLoading(true);
+    setFetchError(false);
+
+    // If server takes >2.5s, it is likely a Render cold start
+    const wakeTimer = setTimeout(() => {
+      setServerWakingUp(true);
+    }, 2500);
+
     try {
       const params = { page: pageNum, limit: LIMIT };
       if (filtersToUse.search)                          params.search    = filtersToUse.search;
@@ -53,14 +75,30 @@ export default function Home() {
       if (filtersToUse.forGender !== 'Anyone')          params.forGender = filtersToUse.forGender;
       if (filtersToUse.food)                            params.food      = true;
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
       const res = await axios.get(`${API_BASE}/api/listings`, { params });
       setListings(res.data.listings);
       setTotal(res.data.total);
       setTotalPages(res.data.totalPages);
+
+      // Cache page 1 default results for instantaneous loads next time
+      if (pageNum === 1 && !filtersToUse.search && !filtersToUse.maxRent && filtersToUse.forGender === 'Anyone' && !filtersToUse.food) {
+        try {
+          sessionStorage.setItem('rentright_cached_listings', JSON.stringify({
+            listings: res.data.listings,
+            total: res.data.total,
+            totalPages: res.data.totalPages
+          }));
+        } catch (_) {}
+      }
     } catch (err) {
       console.error('Error fetching listings:', err);
+      setFetchError(true);
+    } finally {
+      clearTimeout(wakeTimer);
+      setLoading(false);
+      setServerWakingUp(false);
     }
   }, []);
 
@@ -299,8 +337,43 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
           {/* ─── GRID ─── */}
           <div className="listings-main">
+            {serverWakingUp && (
+              <div className="server-wake-notice">
+                <div className="server-wake-spinner" />
+                <div>
+                  <strong>Waking up cloud server...</strong> On free-tier hosting (Render), the backend spins down after 15 minutes of inactivity and takes ~30–45s to boot up. Your verified listings are loading!
+                </div>
+              </div>
+            )}
+
+            {fetchError && listings.length === 0 && (
+              <div className="no-results" style={{ textAlign: 'center', padding: '3rem 1rem' }}>
+                <AlertTriangle size={36} color="#DC2626" style={{ margin: '0 auto 1rem' }} />
+                <h3>Unable to connect to server</h3>
+                <p style={{ marginBottom: '1.25rem' }}>The backend server might still be waking up. Please give it a few seconds and try again.</p>
+                <button
+                  className="btn-post"
+                  onClick={() => fetchListings(filters, page)}
+                >
+                  Retry Loading
+                </button>
+              </div>
+            )}
+
             <div className="listings-grid">
-              {listings.length === 0 ? (
+              {loading && listings.length === 0 ? (
+                // Display 6 animated skeleton cards while waiting
+                Array.from({ length: 6 }).map((_, idx) => (
+                  <div key={idx} className="skeleton-card">
+                    <div className="skeleton-img" />
+                    <div className="skeleton-body">
+                      <div className="skeleton-line title" />
+                      <div className="skeleton-line sub" />
+                      <div className="skeleton-line price" />
+                    </div>
+                  </div>
+                ))
+              ) : listings.length === 0 && !loading && !fetchError ? (
                 <div className="no-results">
                   <h3>No properties found</h3>
                   <p>Try adjusting your filters or searching a different area.</p>
